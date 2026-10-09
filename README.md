@@ -95,7 +95,7 @@ Because my VMs are in two separate VNets, they cannot communicate unless I confi
 **Go to portal.azure.com**
 1. Search Virtual Networks → click on splunkVM’s VNet → click peerings in the left menu → Add
 2. Set the peering link names so they are self describing: This VNet peering link name (splunkVM's) = splunk-vnet-to-ad-vnet → Remote VNet peering link name (testVM's) = ad-vnet-to-splunk-vnet
-3. Under Remote virtual network select the Windows Server VM’s VNet (testVM's) → leave all other settings as default → click Add
+3. Under Remote virtual network select the Windows Server VM’s VNet (testVM's) → leave other settings as default → click Add
 4. Azure creates the peering in both directions automatically. Wait until both peering links show status Connected before continuing
 5. Go to the Windows Server VM and restart the forwarder in PowerShell as Administrator
 ```powershell
@@ -165,7 +165,105 @@ Restart-Service SplunkForwarder
 ```
 
 ### 6. Generated test activity
-A fresh VM has mostly empty logs, so I ran a PowerShell log-generator script that creates a temporary test account and produces failed logons (4625), a successful logon (4624), service stop/start events (7036), application warnings, and repeated bad passwords to trigger a lockout (4740), then removes the account and restarts the forwarder. After about 60 seconds, with the time range set to **All time**, this confirmed data was flowing:
+A fresh VM has mostly empty logs, so I ran a PowerShell log-generator script that creates a temporary test account and produces failed logons (4625), a successful logon (4624), service stop/start events (7036), application warnings, and repeated bad passwords to trigger a lockout (4740), then restarted the forwarder. 
+
+```powershell
+$logFile = 'C:\lab3-log-output.txt'
+$timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+ 
+function Log($message, $color = 'White') {
+    Write-Host $message -ForegroundColor $color
+    Add-Content -Path $logFile -Value "[$timestamp] $message"
+}
+ 
+# Clear any previous run output
+if (Test-Path $logFile) { Remove-Item $logFile }
+Add-Content -Path $logFile -Value "Lab 3 Log Generator - Run started at $timestamp"
+Add-Content -Path $logFile -Value '============================================='
+ 
+Log 'Starting log generation...' Green
+ 
+# Create a temporary test user account
+$testUser = 'labtest.user'
+$testPass = ConvertTo-SecureString 'TempPass123!' -AsPlainText -Force
+New-LocalUser -Name $testUser -Password $testPass -Description 'Splunk lab test account' -ErrorAction SilentlyContinue
+Log "Created test user: $testUser" Gray
+ 
+# --- Generate failed logon attempts (creates Security log activity) ---
+Log 'Generating failed logon attempts (Security log activity)...' Yellow
+$wrongPass = ConvertTo-SecureString 'WrongPassword!' -AsPlainText -Force
+1..15 | ForEach-Object {
+    $cred = New-Object System.Management.Automation.PSCredential($testUser, $wrongPass)
+    Start-Process -FilePath 'cmd.exe' -Credential $cred -ArgumentList '/c exit' -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+}
+Log '  Generated 15 failed logon attempts' Gray
+ 
+# --- Generate successful login (Event ID 4624) ---
+Log 'Generating successful login event (4624)...' Yellow
+$correctPass = ConvertTo-SecureString 'TempPass123!' -AsPlainText -Force
+$cred = New-Object System.Management.Automation.PSCredential($testUser, $correctPass)
+Start-Process -FilePath 'cmd.exe' -Credential $cred -ArgumentList '/c whoami' -Wait -ErrorAction SilentlyContinue
+Log '  Generated successful login (Event ID 4624)' Gray
+ 
+# --- Generate service start/stop events (Event ID 7036) ---
+Log 'Generating service events (7036)...' Yellow
+$services = @('Spooler','Schedule','Netlogon')
+$services | ForEach-Object {
+    Stop-Service -Name $_ -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    Start-Service -Name $_ -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+    Log "  Stopped and restarted service: $_" Gray
+}
+ 
+# --- Generate application log entries ---
+Log 'Generating application log events...' Yellow
+$eventSource = 'SplunkLabTest'
+if (-not [System.Diagnostics.EventLog]::SourceExists($eventSource)) {
+    New-EventLog -LogName Application -Source $eventSource -ErrorAction SilentlyContinue
+}
+1..5 | ForEach-Object {
+    Write-EventLog -LogName Application -Source $eventSource -EventId 1001 `
+        -EntryType Warning -Message 'Splunk lab test event - application warning'
+    Start-Sleep -Milliseconds 300
+}
+Log '  Generated 5 application log entries (Event ID 1001)' Gray
+ 
+# --- Lock out the test account (Event ID 4740) ---
+Log 'Generating account lockout event (4740)...' Yellow
+$badCred = ConvertTo-SecureString 'BadPass!' -AsPlainText -Force
+1..20 | ForEach-Object {
+    $cred = New-Object System.Management.Automation.PSCredential($testUser, $badCred)
+    Start-Process -FilePath 'cmd.exe' -Credential $cred -ArgumentList '/c exit' -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 200
+}
+Log '  Account lockout triggered (Event ID 4740)' Gray
+ 
+# --- Clean up the test account ---
+Start-Sleep -Seconds 3
+Remove-LocalUser -Name $testUser -ErrorAction SilentlyContinue
+Log "Removed test user: $testUser" Gray
+ 
+# --- Restart the forwarder ---
+Log 'Restarting forwarder to ship events to Splunk...' Yellow
+Restart-Service SplunkForwarder -ErrorAction SilentlyContinue
+Log '  SplunkForwarder restarted' Gray
+ 
+$endTime = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+Add-Content -Path $logFile -Value '============================================='
+Add-Content -Path $logFile -Value "Run completed at $endTime"
+Add-Content -Path $logFile -Value 'Wait 60 seconds then run: index=windows_logs | head 100'
+ 
+Write-Host ''
+Write-Host '=============================================' -ForegroundColor Green
+Write-Host 'Done. Output saved to C:\lab3-log-output.txt' -ForegroundColor Green
+Write-Host 'Wait 60 seconds then search Splunk.' -ForegroundColor Green
+Write-Host '=============================================' -ForegroundColor Green
+
+```
+
+After about 60 seconds, on the Splunk Web UI, I set the time range to **All time**, then searched the index using the SPL command below. This let me see events from the Security, System, and Application logs that confirmed data was flowing:
 ```spl
 index=windows_logs | head 100
 ```
