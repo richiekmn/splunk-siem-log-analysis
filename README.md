@@ -1,4 +1,4 @@
-Watch me explain this lab: LoomLinkTBA
+Watch me explain this lab: [LoomLink](https://www.loom.com/share/adf27b36e807457ea121ba9c0ebc6faa)
 
 # splunk-siem-log-analysis
 
