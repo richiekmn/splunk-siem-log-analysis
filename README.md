@@ -46,6 +46,8 @@ Splunk Web UI (port 8000) → SPL searches, dashboards, alerts
 | 8000 (Splunk web UI) | splunkVM's public IP | Analyst access |
 | 9997 (forwarder input) | testVM's private IP | Only my own VM can send logs, not the public internet |
 
+<img width="1253" height="426" alt="SplunkLabPortRulesUbuntuVM" src="https://github.com/user-attachments/assets/68ca6022-5664-4e86-9eae-fbe13b7b2c51" />
+
 Key concepts I needed:
 
 - **Index:** a named storage bucket for events, like a database table. A dedicated `windows_logs` index lets me control retention and permissions separately from other sources.
@@ -60,6 +62,10 @@ Key concepts I needed:
 ### 1. Deployed Splunk on an Ubuntu Azure VM
 Created an Ubuntu 24.04 VM (Splunk needs at least 4 GB RAM) with the NSG rules above, scoped tightly rather than opened to the internet.
 
+<img width="1613" height="287" alt="SplunkLabVMProvisioning" src="https://github.com/user-attachments/assets/4cbafa3e-adc3-4207-8e8d-056a42e8fd81" />
+
+> `testVM` is my Windows VM serving as the log source for Splunk which will be deployed on `splunkVM` which is running Ubuntu
+
 ### 2. Connected over SSH with PuTTY and installed Splunk
 I worked from a Windows machine, so I used **PuTTY** as my SSH client:
 
@@ -70,12 +76,19 @@ This is where I ran into my first hiccup. Azure provides a private key in **`.pe
 2. Opened **PuTTYgen** → **Conversions → Import key** → selected the downloaded `.pem` file
 3. Clicked **Save private key** to write out a `.ppk` file and saved it
 
+<img width="452" height="361" alt="SplunkLabPuttyKeyConversion" src="https://github.com/user-attachments/assets/0e22f6d4-2ef2-48e4-8778-99b72ee68636" />
+
+
 **Connect with the key:**
 1. Opened **PuTTY** and entered the splunkVM's **public IP** (from the Azure portal) in **Host Name**, with **Port** `22` and **Connection type** `SSH`
 2. Went to **Connection → Data** and set **Auto-login username** to the admin username I chose when creating splunkVM
 3. Went to **Connection → SSH → Auth → Credentials**, clicked **Browse** next to **Private key file for authentication**, and selected the `.ppk`
 4. Back on the **Session** page, saved the settings as a named session so I don't have to repeat this each time, then clicked **Open**
 5. Accepted the host key alert, which appears the first time you connect to a new server
+
+<img width="337" height="338" alt="SplunkLabPuttySSH" src="https://github.com/user-attachments/assets/792ce1e8-041d-4874-ae59-31eebafc209c" />
+<img width="535" height="421" alt="SplunkLabUbuntuTerminal" src="https://github.com/user-attachments/assets/64cd7a81-4298-4bff-82a9-ae74b5a319d2" />
+
 
 No password is typed because the key authenticates me. In PuTTY, a right click pastes clipboard text into the terminal, which is how I ran the commands below.
 
@@ -101,6 +114,8 @@ Because my VMs are in two separate VNets, they cannot communicate unless I confi
 ```powershell
 Restart-Service SplunkForwarder
 ```
+<img width="1532" height="230" alt="SplunkLabPeeringSuccess" src="https://github.com/user-attachments/assets/e46b21e6-f0b3-469c-bf20-57b65f591f53" />
+
 One thing to note is that I actually ran into an issue while setting up peering. The problem was that both VNets had overlapping address spaces, so they could not be peered. Although changing the address space of one of the VNets sounded simple enough, I had to perform a couple steps before Azure allowed me to change the address space of one of the VNets.
 1. Add a new address space in the VNet you want to change while temporarily keeping the prexisting address space because the existing subnet is still in use due to the NIC being attached to the existing subnet
 2. Create a new subnet corresponding to the new address space you added to the VNet
@@ -109,6 +124,11 @@ One thing to note is that I actually ran into an issue while setting up peering.
 5. If everything works and you've confirmed the VM's NIC is using the new subnet, you can safely remove the old existing subnet
 6. Finally you can remove the old prexisting VNet address space without problems from Azure
 7. Now the VNet should have a different address space than the other VNet, and peering should work fine
+
+<img width="1912" height="287" alt="SplunkLabAddressRangeChange" src="https://github.com/user-attachments/assets/5a3375fd-9e46-4783-a069-fe9ad2587f02" />
+
+> `vnet-eastus-1` originally had address range 172.16.0.0 which overlapped with `vnet-eastus-2`
+<img width="1913" height="274" alt="SplunkLabAddressRange" src="https://github.com/user-attachments/assets/6b3ac500-6231-4c85-8f95-b2211c47544f" />
 
 ### 4. Enabled receiving and created an index
 In the Splunk UI:
